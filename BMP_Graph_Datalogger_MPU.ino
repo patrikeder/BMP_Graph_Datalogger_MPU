@@ -26,6 +26,7 @@
  	 
  */
 
+#include <SPI.h>
 #include <SD.h>
 #include <Wire.h>
 
@@ -337,7 +338,7 @@ void loop()
       measREADY = 0;
     }
     // other program behavior stuff here
-    // .
+    // .  
     // .
     // .
     // if you are really paranoid you can frequently test in between other
@@ -355,13 +356,16 @@ void loop()
   fifoCount = mpu.getFIFOCount();
 
   // check for overflow (this should never happen unless our code is too inefficient)
-  if ((mpuIntStatus & 0x10) || fifoCount == 1024) {
-    // reset so we can continue cleanly
-    mpu.resetFIFO();
+  if  (fifoCount == 1024) {
     LCD_msg_out("FIFO overflow!");
-
-    // otherwise, check for DMP data ready interrupt (this should happen frequently)
-  } 
+    // reset so we can continue cleanl
+    mpu.resetFIFO();	  
+  }
+  else if(mpuIntStatus & 0x10){
+    LCD_msg_out("FIFO intOvr!");
+    mpu.resetFIFO();	  
+  }  
+  // otherwise, check for DMP data ready interrupt (this should happen frequently)
   else if (mpuIntStatus & 0x02) {
     // wait for correct available data length, should be a VERY short wait
     while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();
@@ -383,8 +387,8 @@ void loop()
     blinkState = !blinkState;
     digitalWrite(LED_PIN, blinkState);
   }
-
 }
+
 
 
 
