@@ -26,6 +26,9 @@
  	 
  */
 
+
+#define LCD_verbose
+
 #include <SPI.h>
 #include <SD.h>
 #include <Wire.h>
@@ -35,6 +38,8 @@
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
 MPU6050 mpu;
+
+#define MPU_POWER 48 //MPU power source pin
 
 
 // MPU control/status vars
@@ -69,6 +74,7 @@ int measREADY = 0;
 #define SLEEP_125mS       bit (WDP1) | bit (WDP0)
 #define SLEEP_64mS        bit (WDP1)
 
+#define RUNTIME_MAX 1000*60*1 //run 1 Minute and restart
 
 // watchdog interrupt
 ISR (WDT_vect) 
@@ -96,6 +102,12 @@ void wdt_sleep(int time)
   sleep_disable();   
 }
 
+void wdt_reset_trigger()
+{
+  cli();                  // Clear interrupts
+  wdt_enable(WDTO_15MS);      // Set the Watchdog to 15ms
+  while(1);            // Enter an infinite loop
+}
 
 
 #include <LCD5110_Graph.h>
@@ -142,9 +154,9 @@ void LCD_update(long time)
   dtostrf(ypr[1],1, 3,tmp);
   myGLCD.print(tmp,RIGHT,32);
 
-  myGLCD.print("rol=  ",LEFT,38);
+  myGLCD.print("rol=  ",LEFT,40);
   dtostrf(ypr[2],1, 3,tmp);
-  myGLCD.print(tmp,RIGHT,38);
+  myGLCD.print(tmp,RIGHT,40);
 
   myGLCD.update();       
 
@@ -294,21 +306,26 @@ void setup()
   myGLCD.setFont(SmallFont);
 
   //Serial.begin(115200);
-
+  // configure pins for output
+  pinMode(LED_PIN, OUTPUT);
   pinMode(53, OUTPUT); // MEGA
+  pinMode(MPU_POWER,OUTPUT);
+  digitalWrite(MPU_POWER, LOW);
+  
   Wire.begin();
   TWBR = 24; // 400kHz I2C clock (200kHz if CPU is 8MHz)
 
   // see if the card is present and can be initialized:
   if (!SD.begin(chipSelect)) {
-    LCD_msg_out("Card failed");
     // don't do anything more:
-    while(1);
+    while(1){
+      LCD_msg_out("Card failed");
+    }
   }
 
   SPI.setClockDivider(SPI_CLOCK_DIV2); //Speed up SD
 
-  for (int i = 0;i<100;i++)
+  for (int i = 0;i<500;i++)
   {
     String tmp_logfile = String(base_logfile) + String(i);
     tmp_logfile += String(".csv");
@@ -329,8 +346,16 @@ void setup()
         while(1);
       }
     }
+
+    if (i==499){      
+      while(1){
+        LCD_msg_out("Out of files",2000); // no file available
+      }
+    }
   }
 
+  digitalWrite(MPU_POWER, HIGH); //enable power source for MPU
+  delay(100);
   ap = 0;
   mpu.initialize();
 
@@ -364,8 +389,6 @@ void setup()
     LCD_msg_out(String("DMP failed: ")+ String(devStatus));
     while (1);
   }
-  // configure LED for output
-  pinMode(LED_PIN, OUTPUT);
   measREADY = 0;
   LCD_msg_out("Logging");
 }
@@ -375,12 +398,20 @@ void loop()
   // if programming failed, don't try to do anything
   if (!dmpReady) return;
 
+  if (millis()> RUNTIME_MAX){
+    LCD_msg_out("Restart !");
+    digitalWrite(MPU_POWER, LOW);
+    wdt_reset_trigger();
+  }
+
+
   // wait for MPU interrupt or extra packet(s) available
   while (!mpuInterrupt && fifoCount < packetSize) {
     // other program behavior stuff here
-    // .  
-    // .
-    // .
+    if (millis()> RUNTIME_MAX){
+      LCD_msg_out("Restart !");
+      wdt_reset_trigger();
+    }
     // if you are really paranoid you can frequently test in between other
     // stuff to see if mpuInterrupt is true, and if so, "break;" from the
     // while() loop to immediately process the MPU data
@@ -397,16 +428,16 @@ void loop()
 
   // check for overflow (this should never happen unless our code is too inefficient)
   if  (fifoCount == 1024) {
-    #ifdef LCD_verbose
+#ifdef LCD_verbose
     LCD_msg_out("FIFO overflow!");
-    #endif 
+#endif 
     file_write("FIFO overflow!");
-    
+
     // reset so we can continue cleanl
     mpu.resetFIFO();	  
   }
   else if(mpuIntStatus & 0x10){
-    #ifdef LCD_verbose
+#ifdef LCD_verbose
     LCD_msg_out("FIFO intOvr!");
 #endif
     file_write("FIFO intOvr!");
@@ -445,6 +476,11 @@ void loop()
   }
 
 }
+
+
+
+
+
 
 
 
