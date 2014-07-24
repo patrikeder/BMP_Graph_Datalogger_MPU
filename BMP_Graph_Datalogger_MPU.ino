@@ -306,6 +306,8 @@ void setup()
     while(1);
   }
 
+  SPI.setClockDivider(SPI_CLOCK_DIV2); //Speed up SD
+
   for (int i = 0;i<100;i++)
   {
     String tmp_logfile = String(base_logfile) + String(i);
