@@ -74,7 +74,7 @@ int measREADY = 0;
 #define SLEEP_125mS       bit (WDP1) | bit (WDP0)
 #define SLEEP_64mS        bit (WDP1)
 
-#define RUNTIME_MAX 1000*60*1 //run 1 Minute and restart
+const unsigned long RUNTIME_MAX = 5*60*1000; //run 5 Minutes and restart
 
 // watchdog interrupt
 ISR (WDT_vect) 
@@ -95,17 +95,19 @@ void wdt_sleep(int time)
   set_sleep_mode (SLEEP_MODE_PWR_DOWN);  
   sleep_enable();
 
-
   sleep_cpu ();  
 
   // cancel sleep as a precaution
   sleep_disable();   
 }
 
+void(* resetFunc) (void) = 0;//declare reset function at address 0
+
 void wdt_reset_trigger()
 {
-  cli();                  // Clear interrupts
-  wdt_enable(WDTO_15MS);      // Set the Watchdog to 15ms
+  //cli();                  // Clear interrupts
+  //wdt_enable(WDTO_15MS);      // Set the Watchdog to 15ms
+  resetFunc();
   while(1);            // Enter an infinite loop
 }
 
@@ -118,7 +120,7 @@ extern uint8_t SmallFont[];
 #define base_logfile "data"
 char  logfile[8+3];
 
-const unsigned int  uArray_Size = 20;
+const unsigned int  uArray_Size = 50;
 String dataString_array[uArray_Size];
 int ap = 0;
 
@@ -220,6 +222,12 @@ int meas_log()
     digitalWrite(LED_PIN, LOW);
   }
 
+  if (time > RUNTIME_MAX){
+    LCD_msg_out("Restart !");
+    wdt_reset_trigger();
+    while (1);
+  }
+
   return 0;
 }
 
@@ -306,12 +314,13 @@ void setup()
   myGLCD.setFont(SmallFont);
 
   //Serial.begin(115200);
+
   // configure pins for output
   pinMode(LED_PIN, OUTPUT);
   pinMode(53, OUTPUT); // MEGA
   pinMode(MPU_POWER,OUTPUT);
   digitalWrite(MPU_POWER, LOW);
-  
+
   Wire.begin();
   TWBR = 24; // 400kHz I2C clock (200kHz if CPU is 8MHz)
 
@@ -398,20 +407,10 @@ void loop()
   // if programming failed, don't try to do anything
   if (!dmpReady) return;
 
-  if (millis()> RUNTIME_MAX){
-    LCD_msg_out("Restart !");
-    digitalWrite(MPU_POWER, LOW);
-    wdt_reset_trigger();
-  }
-
 
   // wait for MPU interrupt or extra packet(s) available
   while (!mpuInterrupt && fifoCount < packetSize) {
     // other program behavior stuff here
-    if (millis()> RUNTIME_MAX){
-      LCD_msg_out("Restart !");
-      wdt_reset_trigger();
-    }
     // if you are really paranoid you can frequently test in between other
     // stuff to see if mpuInterrupt is true, and if so, "break;" from the
     // while() loop to immediately process the MPU data
@@ -476,6 +475,8 @@ void loop()
   }
 
 }
+
+
 
 
 
