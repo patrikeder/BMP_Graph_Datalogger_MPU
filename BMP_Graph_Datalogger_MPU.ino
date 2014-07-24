@@ -106,7 +106,7 @@ extern uint8_t SmallFont[];
 #define base_logfile "data"
 char  logfile[8+3];
 
-const unsigned int  uArray_Size = 50;
+const unsigned int  uArray_Size = 20;
 String dataString_array[uArray_Size];
 int ap = 0;
 
