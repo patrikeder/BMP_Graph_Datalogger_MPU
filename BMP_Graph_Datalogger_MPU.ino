@@ -30,6 +30,8 @@
 #include <SD.h>
 #include <Wire.h>
 
+#include<stdlib.h>
+
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
 MPU6050 mpu;
@@ -41,7 +43,7 @@ uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
 uint8_t devStatus;      // return status after each device operation (0 = success, !0 = error)
 uint16_t packetSize;    // expected DMP packet size (default is 42 bytes)
 uint16_t fifoCount;     // count of all bytes currently in FIFO
-uint8_t fifoBuffer[64]; // FIFO storage buffer
+uint8_t fifoBuffer[128]; // FIFO storage buffer
 
 // orientation/motion vars
 Quaternion q;           // [w, x, y, z]         quaternion container
@@ -53,13 +55,48 @@ float euler[3];         // [psi, theta, phi]    Euler angle container
 float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
 
 
+#define LED_PIN 13 // (Arduino is 13, Teensy is 11, Teensy++ is 6)
+bool blinkState = false;
+int measREADY = 0;
+#define HEADER "Time;arX;arY;arZ;aX;aY;aZ;gX;gY;gZ;yaw;pitch;roll;"
+
 #include <avr/sleep.h>
 #include <avr/wdt.h>
+#include <avr/pgmspace.h>
 
 #define SLEEP_8S          bit (WDP3) | bit (WDP0)
 #define SLEEP_1S          bit (WDP2) | bit (WDP1)
 #define SLEEP_125mS       bit (WDP1) | bit (WDP0)
 #define SLEEP_64mS        bit (WDP1)
+
+
+// watchdog interrupt
+ISR (WDT_vect) 
+{
+  wdt_disable();  // disable watchdog
+}  // end of WDT_vect
+
+void wdt_sleep(int time)
+{
+  // clear various "reset" flags
+  MCUSR = 0;     
+  // allow changes, disable reset
+  WDTCSR = bit (WDCE) | bit (WDE);
+  // set interrupt mode and an interval 
+  WDTCSR = bit (WDIE) | time;    // set WDIE, and 8 seconds delay
+  wdt_reset();  // pat the dog
+
+  set_sleep_mode (SLEEP_MODE_PWR_DOWN);  
+  sleep_enable();
+
+
+  sleep_cpu ();  
+
+  // cancel sleep as a precaution
+  sleep_disable();   
+}
+
+
 
 #include <LCD5110_Graph.h>
 
@@ -69,7 +106,7 @@ extern uint8_t SmallFont[];
 #define base_logfile "data"
 char  logfile[8+3];
 
-const unsigned int  uArray_Size = 83;
+const unsigned int  uArray_Size = 50;
 String dataString_array[uArray_Size];
 int ap = 0;
 
@@ -80,23 +117,32 @@ int ap = 0;
 const int chipSelect = 4;
 uint16_t pval,xpos = 0;
 
-void LCD_update(long time, uint32_t val)
+void LCD_update(long time)
 {
+  char tmp[8];
   xpos ++;
-
-  pval = (uint16_t) map(val, -180, 180, 47, 25);
-  myGLCD.setPixel(xpos, pval);
 
   myGLCD.print("Sec=  ",LEFT,0);
   myGLCD.printNumI(time/1000,RIGHT,0);
+  
   myGLCD.print("ax=  ",LEFT,8);
-  myGLCD.print(String((long)aa.x),RIGHT,8);
-  myGLCD.print("gx=  ",LEFT,16);
-  myGLCD.print(String((long)gravity.x),RIGHT,16);
-  myGLCD.print("ay=  ",LEFT,24);
-  myGLCD.print(String((long)aa.y),RIGHT,24);
-  myGLCD.print("gy=  ",LEFT,32);
-  myGLCD.print(String((long)gravity.y),RIGHT,32);
+  myGLCD.print(String((int)aa.x),RIGHT,8);  
+ 
+  myGLCD.print("gz=  ",LEFT,16);
+  dtostrf(gravity.z,1, 3,tmp);
+  myGLCD.print(tmp,RIGHT,16);    
+  
+  myGLCD.print("yaw=  ",LEFT,24);
+  dtostrf(ypr[0],1, 3,tmp);
+  myGLCD.print(tmp,RIGHT,24);
+
+  myGLCD.print("pitch=  ",LEFT,32);
+  dtostrf(ypr[1],1, 3,tmp);
+  myGLCD.print(tmp,RIGHT,32);
+
+  myGLCD.print("rol=  ",LEFT,38);
+  dtostrf(ypr[2],1, 3,tmp);
+  myGLCD.print(tmp,RIGHT,38);
 
   myGLCD.update();       
 
@@ -113,35 +159,53 @@ void LCD_msg_out(String msg,int time = 500)
   myGLCD.print("             ",LEFT,15);
   myGLCD.print(msg,LEFT,15);
   myGLCD.update(); 
-  delay(time);
+  wdt_sleep(SLEEP_125mS);wdt_sleep(SLEEP_125mS);
+  if (time > 500){
+    wdt_sleep(SLEEP_125mS);wdt_sleep(SLEEP_125mS);
+    wdt_sleep(SLEEP_125mS);wdt_sleep(SLEEP_125mS);
+  }
   myGLCD.clrScr();
 }
 
 int meas_log()
 {  // make a string for assembling the data to log:
+  char tmp[3][8];
   String dataString = "";
 
   long time = millis();
-
-  //LCD_update(time,aa.z);
-
+  // blink LED to indicate activity
+  //  blinkState = !blinkState;
+  //  digitalWrite(LED_PIN, blinkState);
   dataString += String(time) + String(";");
-  dataString += String((long)aa.x) + String(";") + String((long)aa.y)+ String(";") + String((long)aa.z)+ String(";");
-  dataString += String((long)gravity.x) + String(";") + String((long)gravity.y)+ String(";") + String((long)gravity.z)+ String(";");
-  dataString += String((long)(ypr[0] * 180/M_PI)) + String(";") + String((long)(ypr[1] * 180/M_PI))+ String(";") + String((long)(ypr[2] * 180/M_PI))+ String(";");
+  dataString += String((int)aaReal.x) + String(";") + String((int)aaReal.y)+ String(";") + String((int)aaReal.z)+ String(";");
+  dataString += String((int)aa.x) + String(";") + String((int)aa.y)+ String(";") + String((int)aa.z)+ String(";");
+
+  dtostrf(gravity.x,1, 3,tmp[0]);
+  dtostrf(gravity.y,1, 3,tmp[1]);
+  dtostrf(gravity.z,1, 3,tmp[2]);
+  dataString += String(tmp[0]) + String(";") + String(tmp[1])+ String(";") + String(tmp[2])+ String(";");
+  
+  dtostrf(ypr[0],1, 3,tmp[0]);
+  dtostrf(ypr[1],1, 3,tmp[1]);
+  dtostrf(ypr[2],1, 3,tmp[2]);  
+  dataString += String(tmp[0]) + String(";") + String(tmp[1])+ String(";") + String(tmp[2])+ String(";");
 
   dataString_array[ap++] = dataString;
-
+  
   if (ap == uArray_Size){
     ap = 0;  
+    digitalWrite(LED_PIN, HIGH);
     file_write(dataString_array);
+    LCD_update(time);
+    digitalWrite(LED_PIN, LOW);
   }
+
   return 0;
 }
 
 int make_header()
 {
-  if (file_write("Time;aX;aY;aZ;gX;gY;gZ;yaw;pitch;roll;") == 0)
+  if (file_write(HEADER) == 0)
   {
     LCD_msg_out("Header done",250);
   }
@@ -200,32 +264,6 @@ int file_write(String strng1,String strng2)
   return ret;
 }
 
-// watchdog interrupt
-ISR (WDT_vect) 
-{
-  wdt_disable();  // disable watchdog
-}  // end of WDT_vect
-
-void wdt_sleep(int time)
-{
-  // clear various "reset" flags
-  MCUSR = 0;     
-  // allow changes, disable reset
-  WDTCSR = bit (WDCE) | bit (WDE);
-  // set interrupt mode and an interval 
-  WDTCSR = bit (WDIE) | time;    // set WDIE, and 8 seconds delay
-  wdt_reset();  // pat the dog
-
-  set_sleep_mode (SLEEP_MODE_PWR_DOWN);  
-  sleep_enable();
-
-
-  sleep_cpu ();  
-
-  // cancel sleep as a precaution
-  sleep_disable();   
-}
-
 
 // ================================================================
 // ===               INTERRUPT DETECTION ROUTINE                ===
@@ -237,21 +275,21 @@ void dmpDataReady() {
 }
 
 
-#define LED_PIN 13 // (Arduino is 13, Teensy is 11, Teensy++ is 6)
-bool blinkState = false;
-int measREADY = 0;
 
 // ================================================================
 // ===                      INITIAL SETUP                       ===
 // ================================================================
 void setup()
 {
-
   myGLCD.InitLCD();
   myGLCD.clrScr();
   myGLCD.setFont(SmallFont);
-
+    
+  //Serial.begin(115200);
+    
   pinMode(53, OUTPUT); // MEGA
+  Wire.begin();
+  TWBR = 24; // 400kHz I2C clock (200kHz if CPU is 8MHz)
 
   // see if the card is present and can be initialized:
   if (!SD.begin(chipSelect)) {
@@ -263,9 +301,8 @@ void setup()
   for (int i = 0;i<100;i++)
   {
     String tmp_logfile = String(base_logfile) + String(i);
-    tmp_logfile += String(".txt");
-    tmp_logfile.toCharArray(logfile, 16) ;
-    Serial.println(logfile);
+    tmp_logfile += String(".csv");
+    tmp_logfile.toCharArray(logfile, 16);
     // if the file is available, next number:
     if (SD.exists(logfile)) {
       LCD_msg_out("File exists, next",250);
@@ -290,9 +327,10 @@ void setup()
   LCD_msg_out(mpu.testConnection() ? "MPU6050 ok" : "MPU6050 failed",1000);
 
   devStatus = mpu.dmpInitialize();
-  mpu.setXGyroOffset(220);
-  mpu.setYGyroOffset(76);
-  mpu.setZGyroOffset(-85);
+
+  mpu.setXGyroOffset(59);
+  mpu.setYGyroOffset(62);
+  mpu.setZGyroOffset(1);
   mpu.setZAccelOffset(1788); 
 
   if (devStatus == 0) {    
@@ -313,30 +351,22 @@ void setup()
     // 1 = initial memory load failed
     // 2 = DMP configuration updates failed
     // (if it's going to break, usually the code will be 1)
-    LCD_msg_out(String("DMP failed code ")+ String(devStatus));
+    LCD_msg_out(String("DMP failed: ")+ String(devStatus));
     while (1);
   }
   // configure LED for output
   pinMode(LED_PIN, OUTPUT);
   measREADY = 0;
+  LCD_msg_out("Logging");
 }
 
 void loop()
 {
-  uint32_t counter;
-
-  LCD_msg_out("Logging");
-
   // if programming failed, don't try to do anything
   if (!dmpReady) return;
 
   // wait for MPU interrupt or extra packet(s) available
   while (!mpuInterrupt && fifoCount < packetSize) {
-    if (measREADY == 1)
-    {
-      meas_log();
-      measREADY = 0;
-    }
     // other program behavior stuff here
     // .  
     // .
@@ -377,17 +407,33 @@ void loop()
     // (this lets us immediately read more without waiting for an interrupt)
     fifoCount -= packetSize;
 
-    // display Euler angles in degrees
+    mpu.dmpGetQuaternion(&q, fifoBuffer);
+    mpu.dmpGetEuler(euler, &q);
+
     mpu.dmpGetQuaternion(&q, fifoBuffer);
     mpu.dmpGetGravity(&gravity, &q);
     mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+
+    mpu.dmpGetQuaternion(&q, fifoBuffer);
     mpu.dmpGetAccel(&aa, fifoBuffer);
-    measREADY = 1;
-    // blink LED to indicate activity
-    blinkState = !blinkState;
-    digitalWrite(LED_PIN, blinkState);
+    mpu.dmpGetGravity(&gravity, &q);
+    mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+
+    measREADY = 1; 
   }
+  if (measREADY == 1)
+  {
+    meas_log();
+    measREADY = 0;
+  }
+
 }
+
+
+
+
+
+
 
 
 
