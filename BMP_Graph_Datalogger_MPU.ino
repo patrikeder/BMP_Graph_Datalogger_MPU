@@ -30,7 +30,7 @@
 #include <SD.h>
 #include <Wire.h>
 
-#include<stdlib.h>
+#include <stdlib.h>
 
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
@@ -115,7 +115,9 @@ int ap = 0;
 // 53 on the Mega) must be left as an output or the SD library
 // functions will not work.
 const int chipSelect = 4;
-uint16_t pval,xpos = 0;
+
+#ifdef LCD_verbose
+uint16_t xpos = 0;
 
 void LCD_update(long time)
 {
@@ -124,14 +126,14 @@ void LCD_update(long time)
 
   myGLCD.print("Sec=  ",LEFT,0);
   myGLCD.printNumI(time/1000,RIGHT,0);
-  
+
   myGLCD.print("ax=  ",LEFT,8);
   myGLCD.print(String((int)aa.x),RIGHT,8);  
- 
+
   myGLCD.print("gz=  ",LEFT,16);
   dtostrf(gravity.z,1, 3,tmp);
   myGLCD.print(tmp,RIGHT,16);    
-  
+
   myGLCD.print("yaw=  ",LEFT,24);
   dtostrf(ypr[0],1, 3,tmp);
   myGLCD.print(tmp,RIGHT,24);
@@ -152,6 +154,7 @@ void LCD_update(long time)
     myGLCD.clrScr();
   }
 }
+#endif
 
 void LCD_msg_out(String msg,int time = 500)
 {
@@ -159,10 +162,13 @@ void LCD_msg_out(String msg,int time = 500)
   myGLCD.print("             ",LEFT,15);
   myGLCD.print(msg,LEFT,15);
   myGLCD.update(); 
-  wdt_sleep(SLEEP_125mS);wdt_sleep(SLEEP_125mS);
+  wdt_sleep(SLEEP_125mS);
+  wdt_sleep(SLEEP_125mS);
   if (time > 500){
-    wdt_sleep(SLEEP_125mS);wdt_sleep(SLEEP_125mS);
-    wdt_sleep(SLEEP_125mS);wdt_sleep(SLEEP_125mS);
+    wdt_sleep(SLEEP_125mS);
+    wdt_sleep(SLEEP_125mS);
+    wdt_sleep(SLEEP_125mS);
+    wdt_sleep(SLEEP_125mS);
   }
   myGLCD.clrScr();
 }
@@ -184,19 +190,21 @@ int meas_log()
   dtostrf(gravity.y,1, 3,tmp[1]);
   dtostrf(gravity.z,1, 3,tmp[2]);
   dataString += String(tmp[0]) + String(";") + String(tmp[1])+ String(";") + String(tmp[2])+ String(";");
-  
+
   dtostrf(ypr[0],1, 3,tmp[0]);
   dtostrf(ypr[1],1, 3,tmp[1]);
   dtostrf(ypr[2],1, 3,tmp[2]);  
   dataString += String(tmp[0]) + String(";") + String(tmp[1])+ String(";") + String(tmp[2])+ String(";");
 
   dataString_array[ap++] = dataString;
-  
+
   if (ap == uArray_Size){
     ap = 0;  
     digitalWrite(LED_PIN, HIGH);
     file_write(dataString_array);
+#ifdef LCD_verbose
     LCD_update(time);
+#endif
     digitalWrite(LED_PIN, LOW);
   }
 
@@ -284,9 +292,9 @@ void setup()
   myGLCD.InitLCD();
   myGLCD.clrScr();
   myGLCD.setFont(SmallFont);
-    
+
   //Serial.begin(115200);
-    
+
   pinMode(53, OUTPUT); // MEGA
   Wire.begin();
   TWBR = 24; // 400kHz I2C clock (200kHz if CPU is 8MHz)
@@ -331,7 +339,7 @@ void setup()
   mpu.setXGyroOffset(59);
   mpu.setYGyroOffset(62);
   mpu.setZGyroOffset(1);
-  mpu.setZAccelOffset(1788); 
+  mpu.setZAccelOffset(0); 
 
   if (devStatus == 0) {    
     mpu.setDMPEnabled(true);
@@ -387,12 +395,19 @@ void loop()
 
   // check for overflow (this should never happen unless our code is too inefficient)
   if  (fifoCount == 1024) {
+    #ifdef LCD_verbose
     LCD_msg_out("FIFO overflow!");
+    #endif 
+    file_write("FIFO overflow!");
+    
     // reset so we can continue cleanl
     mpu.resetFIFO();	  
   }
   else if(mpuIntStatus & 0x10){
+    #ifdef LCD_verbose
     LCD_msg_out("FIFO intOvr!");
+#endif
+    file_write("FIFO intOvr!");
     mpu.resetFIFO();	  
   }  
   // otherwise, check for DMP data ready interrupt (this should happen frequently)
@@ -428,6 +443,7 @@ void loop()
   }
 
 }
+
 
 
 
